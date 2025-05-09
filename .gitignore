@@ -1,0 +1,25 @@
+# 忽略 Python项目的临时文件
+__pycache__/
+
+# 可执行文件
+*.exe
+
+# VSCode 配置
+.vscode/
+
+# 音频
+*.wav
+
+# 忽略整个 db 文件夹（包括其中的二进制文件）
+anaconda_projects/db/
+
+.ipynb_checkpoints/
+
+# 模型文件
+iic/
+
+# 对话日志
+conversation_logs/
+
+#live2d模型文件
+model/

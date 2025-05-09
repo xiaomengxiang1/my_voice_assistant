@@ -1,0 +1,120 @@
+<!-- # 进入 frontend 目录
+# 在命令行里切换到你的 frontend/ 文件夹：
+
+# cd E:/vscode_project/py_stu_code/my_voice_assistant/frontend
+# 启动 Python 自带的简易 HTTP 服务器
+
+# 如果你用的是 Python 3.x：
+
+# python -m http.server 8000 -->
+
+<!-- 访问 -->
+<!-- http://localhost:8000/index.html -->
+
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Live2D Desktop Pet</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; overflow: hidden;
+      background: transparent;
+      width: 100%; height: 100%;
+    }
+    canvas {
+      position: fixed; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      pointer-events: auto;
+      /* 背景设为透明 */
+      background-color: transparent;
+      z-index: 9999;
+    }
+  </style>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/6.5.8/browser/pixi.min.js"></script>
+  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/cubism4.min.js"></script>
+  <canvas id="canvas"></canvas>
+  <script>
+    const { Live2DModel } = PIXI.live2d;
+    const app = new PIXI.Application({
+      view: document.getElementById('canvas'),
+      width: window.innerWidth,
+      height: window.innerHeight,
+      transparent: true,
+      autoStart: true
+    });
+    window.addEventListener('resize', () => {
+      app.renderer.resize(window.innerWidth, window.innerHeight);
+    });
+
+    let model = null;
+    function getModelBounds() {
+      const w = model.width * model.scale.x;
+      const h = model.height * model.scale.y;
+      const left = model.x - w * model.anchor.x;
+      const right = left + w;
+      const top = model.y - h * model.anchor.y;
+      const bottom = top + h;
+      return { left, right, top, bottom };
+    }
+    function isPointInModel(x, y) {
+      if (!model) return false;
+      const b = getModelBounds();
+      return x >= b.left && x <= b.right && y >= b.top && y <= b.bottom;
+    }
+
+    new QWebChannel(qt.webChannelTransport, channel => {
+      window.bridge = channel.objects.bridge;
+    });
+
+    Live2DModel.from('model/whitecatfree_vts/sdwhite cat free.model3.json')
+      .then(m => {
+        model = m;
+        model.anchor.set(0.5, 0.5);
+        model.scale.set(0.25);
+        model.x = window.innerWidth/2;
+        model.y = window.innerHeight/2;
+        model.interactive = true;
+        model.buttonMode = true;
+        app.stage.addChild(model);
+        model.on('pointerdown', onDragStart);
+      })
+      .catch(console.error);
+
+    let dragging = false;
+    const dragOffset = {x:0,y:0};
+    function onDragStart(e) {
+      dragging = true;
+      dragOffset.x = e.data.global.x - model.x;
+      dragOffset.y = e.data.global.y - model.y;
+      bridge.setMouseTransparent(false);
+      document.addEventListener('pointermove', onDragMove);
+      document.addEventListener('pointerup', onDragEnd);
+      e.stopPropagation();
+    }
+    function onDragMove(e) {
+      if (!dragging) return;
+      model.x = e.clientX - dragOffset.x;
+      model.y = e.clientY - dragOffset.y;
+    }
+    function onDragEnd() {
+      dragging = false;
+      document.removeEventListener('pointermove', onDragMove);
+      document.removeEventListener('pointerup', onDragEnd);
+    }
+
+    document.addEventListener('wheel', e => {
+      if (!model) return;
+      e.preventDefault();
+      const s = model.scale.x * (e.deltaY < 0 ? 1.05 : 0.95);
+      model.scale.set(Math.min(Math.max(s, 0.1), 2));
+    });
+  </script>
+</body>
+</html>
+
