@@ -227,20 +227,20 @@ def start_service(use_deepseek=False):
         save_conversation_history()
 
 
-async def subtitles_handler(ws, path):
+async def subtitles_handler(connection):
     """
     WebSocket连接处理函数
     """
     # 新客户端接入，使用websocket.py中的函数
-    register_client(ws)
+    register_client(connection)
     print(f"新的WebSocket客户端连接，当前连接数: {len(ws_module.SUBSCRIBERS)}")
     
     try:
         # 发送欢迎消息
-        await ws.send(json.dumps({"type": "system", "text": "WebSocket连接成功"}))
+        await connection.send(json.dumps({"type": "system", "text": "WebSocket连接成功"}))
         
         # 保持连接，接收客户端心跳或其他消息
-        async for message in ws:
+        async for message in connection:
             try:
                 data = json.loads(message)
                 print(f"收到客户端消息: {data}")
@@ -250,7 +250,7 @@ async def subtitles_handler(ws, path):
     except websockets.exceptions.ConnectionClosed:
         print("WebSocket连接已关闭")
     finally:
-        unregister_client(ws)
+        unregister_client(connection)
         print(f"WebSocket客户端断开连接，当前连接数: {len(ws_module.SUBSCRIBERS)}")
 
 
@@ -258,18 +258,26 @@ def start_subtitle_server():
     """
     启动WebSocket服务器
     """
+    # 1. 创建一个新的事件循环
     loop = asyncio.new_event_loop()
+    # 2. 将其设置为当前线程的事件循环
     asyncio.set_event_loop(loop)
-    
-    # 保存事件循环到全局变量，供其他线程使用
+    # 3. 存储到全局，供 send_ws_message 调用
     set_event_loop(loop)
     
-    # 启动WebSocket服务器
-    server = websockets.serve(subtitles_handler, "0.0.0.0", 8000)
-    print("WebSocket服务器启动于 ws://0.0.0.0:8000")
+    # 4. 创建并运行异步服务器
+    async def start_server():
+        server = await websockets.serve(subtitles_handler, "0.0.0.0", 8000)
+        print("WebSocket服务器启动于 ws://0.0.0.0:8000")
+        # 保持服务器运行
+        await asyncio.Future()  # 这个Future永远不会完成，保持服务器运行
     
-    loop.run_until_complete(server)
-    loop.run_forever()
+    try:
+        # 5. 在事件循环中运行异步函数
+        loop.run_until_complete(start_server())
+    except Exception as e:
+        print(f"WebSocket服务器错误: {e}")
+        raise
 
 
 if __name__ == "__main__":

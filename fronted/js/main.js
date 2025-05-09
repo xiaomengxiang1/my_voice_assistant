@@ -208,8 +208,14 @@ function initSubtitleSocket() {
     ws.close();
   }
   
-  // 创建新的WebSocket连接
-  ws = new WebSocket('ws://localhost:8000');
+  // 创建新的WebSocket连接 - 使用当前域名自动获取主机地址
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsHost = window.location.hostname; // 自动获取当前域名
+  const wsPort = '8000'; // WebSocket服务器端口
+  const wsUrl = `${wsProtocol}//${wsHost}:${wsPort}`;
+  
+  console.log(`正在连接到WebSocket服务器: ${wsUrl}`);
+  ws = new WebSocket(wsUrl);
   
   // 连接打开事件
   ws.onopen = () => {
