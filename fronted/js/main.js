@@ -24,15 +24,62 @@ let dragOffset = { x: 0, y: 0 };
 let currentAnimationId = null;
 let modelLoaded = false; // 添加模型加载状态标志
 
-// 加载模型
+// 使用localStorage保存和读取模型位置和缩放
+// 读取保存的模型位置和缩放
+function loadModelSettings() {
+  try {
+    const savedPosition = localStorage.getItem('live2dModelPosition');
+    const savedScale = localStorage.getItem('live2dModelScale');
+    
+    return {
+      position: savedPosition ? JSON.parse(savedPosition) : null,
+      scale: savedScale ? parseFloat(savedScale) : null
+    };
+  } catch (e) {
+    console.error('加载模型设置失败:', e);
+    return { position: null, scale: null };
+  }
+}
+
+// 保存模型位置到localStorage
+function saveModelPosition(x, y) {
+  try {
+    localStorage.setItem('live2dModelPosition', JSON.stringify({ x, y }));
+  } catch (e) {
+    console.error('保存模型位置失败:', e);
+  }
+}
+
+// 保存模型缩放到localStorage
+function saveModelScale(scale) {
+  try {
+    localStorage.setItem('live2dModelScale', scale.toString());
+  } catch (e) {
+    console.error('保存模型缩放失败:', e);
+  }
+}
+
+// 修改模型加载部分
 const modelUrl = 'model/whitecatfree_vts/sdwhite cat free.model3.json';
+// 先加载保存的设置
+const savedSettings = loadModelSettings();
+
 Live2DModel.from(encodeURI(modelUrl))
   .then(loadedModel => {
     model = loadedModel;
     
-    // 设置模型位置和缩放
-    model.scale.set(0.3);
-    model.position.set(window.innerWidth / 2, window.innerHeight / 2);
+    // 设置模型位置和缩放 - 使用localStorage中保存的值或默认值
+    if (savedSettings.scale !== null) {
+      model.scale.set(savedSettings.scale);
+    } else {
+      model.scale.set(0.3);
+    }
+    
+    if (savedSettings.position !== null) {
+      model.position.set(savedSettings.position.x, savedSettings.position.y);
+    } else {
+      model.position.set(window.innerWidth / 2, window.innerHeight / 2);
+    }
     
     // 可拖动和交互
     model.interactive = true;
@@ -54,7 +101,7 @@ Live2DModel.from(encodeURI(modelUrl))
   })
   .catch(err => console.error('模型加载失败:', err));
 
-// 拖拽处理函数
+// 修改拖拽处理函数 - 持久化保存位置
 function onDragStart(event) {
   isDragging = true;
   dragOffset.x = event.data.global.x - model.position.x;
@@ -69,10 +116,14 @@ function onDragMove(event) {
 }
 
 function onDragEnd() {
-  isDragging = false;
+  if (isDragging && model) {
+    // 当拖拽结束时保存位置到localStorage
+    saveModelPosition(model.position.x, model.position.y);
+    isDragging = false;
+  }
 }
 
-// 鼠标滚轮缩放
+// 修改鼠标滚轮缩放 - 添加localStorage持久化
 window.addEventListener('wheel', e => {
   if (model) {
     e.preventDefault();
@@ -82,6 +133,9 @@ window.addEventListener('wheel', e => {
     // 限制缩放范围
     if (newScale >= 0.1 && newScale <= 1.0) {
       model.scale.set(newScale);
+      
+      // 保存当前缩放到localStorage
+      saveModelScale(newScale);
     }
   }
 }, { passive: false });
@@ -92,9 +146,10 @@ let typingSpeed = 100; // 打字效果速度（毫秒/字符）
 let typingIndex = 0;
 let typingText = '';
 let typingInterval = null;
-let currentSubtitleType = null; // 添加当前字幕类型变量
+let currentSubtitleType = null; // 当前字幕类型变量
+let isWebSocketInitializing = false; // 新增：标记WebSocket是否正在初始化
 
-// 更新字幕显示
+// 更新字幕显示 - 确保不会触发WebSocket重连
 function updateSubtitle(text, type = 'normal') {
   // 不在字幕改变时刷新动画，除非类型改变
   const typeChanged = currentSubtitleType !== type;
@@ -125,10 +180,10 @@ function updateSubtitle(text, type = 'normal') {
     subtitleEl.style.color = '#f39c12'; // 系统消息为橙色
     subtitleEl.textContent = text;
     
-    // 系统消息3秒后自动消失
+    // 系统消息3秒后自动消失，但不触发WebSocket重连
     clearTimeout(subtitleEl._clear);
     subtitleEl._clear = setTimeout(() => {
-      fadeOutSubtitle();
+      fadeOutSubtitle(false); // 传入false表示不重置WebSocket
     }, 3000);
   } else {
     // 其他普通消息
@@ -153,19 +208,19 @@ function startTypingEffect(text) {
     } else {
       clearInterval(typingInterval);
       
-      // 用户消息打完5秒后自动消失
+      // 用户消息打完5秒后自动消失，但不重置WebSocket
       if (subtitleEl.style.color === '#3498db') {
         clearTimeout(subtitleEl._clear);
         subtitleEl._clear = setTimeout(() => {
-          fadeOutSubtitle();
+          fadeOutSubtitle(false); // 传入false表示不重置WebSocket
         }, 5000);
       }
     }
   }, typingSpeed);
 }
 
-// 字幕淡出效果
-function fadeOutSubtitle() {
+// 字幕淡出效果 - 添加参数控制是否重置WebSocket连接
+function fadeOutSubtitle(resetWebSocket = false) {
   let opacity = 1.0;
   const fadeInterval = setInterval(() => {
     if (opacity > 0) {
@@ -176,56 +231,43 @@ function fadeOutSubtitle() {
       subtitleEl.textContent = '';
       subtitleEl.style.opacity = 1.0;
       currentSubtitleType = null; // 重置当前字幕类型
+      
+      // 只有当明确指定时才重置WebSocket
+      if (resetWebSocket) {
+        // 避免重复初始化
+        if (!isWebSocketInitializing) {
+          initWebSocketConnection();
+        }
+      }
     }
   }, 50);
 }
 
-// 清除字幕
-function clearSubtitle() {
+// 清除字幕 - 添加参数控制是否重置WebSocket连接
+function clearSubtitle(resetWebSocket = false) {
   subtitleEl.textContent = '';
   clearTimeout(subtitleEl._clear);
   clearInterval(typingInterval);
   currentSubtitleType = null; // 重置当前字幕类型
-}
-
-// 初始化播放说话动画
-function playTalkingAnimation() {
-  if (!modelLoaded || !model) return; // 确保模型已加载
   
-  // 如果已经在播放动画，不要重复启动
-  if (currentAnimationId !== null) return;
-  
-  if (model.internalModel.motionManager.definitions.talk) {
-    // 如果有专门的talk动画，播放它
-    currentAnimationId = model.internalModel.motionManager.startMotion('talk');
-  } else if (model.internalModel.motionManager.definitions.tap_body) {
-    // 否则尝试播放tap_body作为替代
-    currentAnimationId = model.internalModel.motionManager.startMotion('tap_body');
-  }
-}
-
-// 停止说话动画，恢复到空闲
-function stopTalkingAnimation() {
-  if (!modelLoaded || !model) return; // 确保模型已加载
-  
-  if (currentAnimationId !== null) {
-    model.internalModel.motionManager.stopMotion(currentAnimationId);
-    currentAnimationId = null;
-    
-    // 恢复到idle动画
-    if (model.internalModel.motionManager.definitions.idle) {
-      model.internalModel.motionManager.startMotion('idle');
+  // 只有当明确指定时才重置WebSocket
+  if (resetWebSocket) {
+    // 避免重复初始化
+    if (!isWebSocketInitializing) {
+      initWebSocketConnection();
     }
   }
 }
 
-// WebSocket客户端初始化
-let ws;
-let reconnectAttempts = 0;
-const maxReconnectAttempts = 5;
-const reconnectInterval = 2000; // 2秒
-
-function initSubtitleSocket() {
+// 将WebSocket初始化分离为独立函数
+function initWebSocketConnection() {
+  // 避免重复初始化
+  if (isWebSocketInitializing) {
+    console.log('WebSocket已经在初始化中，跳过');
+    return;
+  }
+  
+  isWebSocketInitializing = true;
   console.log('尝试连接WebSocket...');
   
   // 如果已有连接，先关闭
@@ -247,6 +289,7 @@ function initSubtitleSocket() {
     console.log('WebSocket连接成功');
     updateSubtitle('连接成功! 语音助手已准备就绪。', 'system');
     reconnectAttempts = 0; // 重置重连计数
+    isWebSocketInitializing = false; // 重置初始化标志
   };
   
   // 接收消息事件
@@ -273,7 +316,7 @@ function initSubtitleSocket() {
         // AI完整回复
         updateSubtitle(msg.text, 'ai');
         
-        // 回复结束后3秒，停止说话动画
+        // 回复结束后3秒，停止说话动画，但不重置WebSocket
         setTimeout(() => {
           stopTalkingAnimation();
         }, 3000);
@@ -290,11 +333,12 @@ function initSubtitleSocket() {
   // 连接关闭事件
   ws.onclose = () => {
     console.log('WebSocket连接关闭');
+    isWebSocketInitializing = false; // 重置初始化标志
     
     if (reconnectAttempts < maxReconnectAttempts) {
       console.log(`将在 ${reconnectInterval/1000} 秒后尝试重连...`);
       reconnectAttempts++;
-      setTimeout(initSubtitleSocket, reconnectInterval);
+      setTimeout(initWebSocketConnection, reconnectInterval);
     } else {
       console.error('达到最大重连次数，请刷新页面重试');
       updateSubtitle('连接已断开，请刷新页面重试。', 'system');
@@ -304,40 +348,19 @@ function initSubtitleSocket() {
   // 连接错误事件
   ws.onerror = err => {
     console.error('WebSocket连接错误:', err);
+    isWebSocketInitializing = false; // 重置初始化标志
   };
 }
 
-// 初始化WebSocket连接
-initSubtitleSocket();
+// 初始化WebSocket连接 - 使用新的独立函数
+function initSubtitleSocket() {
+  initWebSocketConnection();
+}
 
 // 添加键盘快捷键处理
 document.addEventListener('keydown', (e) => {
-  // 按ESC键清除字幕
+  // 按ESC键清除字幕，但不重置WebSocket
   if (e.key === 'Escape') {
-    clearSubtitle();
+    clearSubtitle(false);
   }
 });
-
-// 添加测试按钮（可选，用于调试）
-function addTestButtons() {
-  const testButtonsDiv = document.createElement('div');
-  testButtonsDiv.style.position = 'fixed';
-  testButtonsDiv.style.bottom = '10px';
-  testButtonsDiv.style.right = '10px';
-  testButtonsDiv.style.zIndex = '100';
-  
-  const testUserBtn = document.createElement('button');
-  testUserBtn.textContent = '测试用户字幕';
-  testUserBtn.onclick = () => updateSubtitle('这是一条测试用户消息', 'user');
-  
-  const testAIBtn = document.createElement('button');
-  testAIBtn.textContent = '测试AI字幕';
-  testAIBtn.onclick = () => updateSubtitle('这是一条测试AI回复消息', 'ai');
-  
-  testButtonsDiv.appendChild(testUserBtn);
-  testButtonsDiv.appendChild(testAIBtn);
-  document.body.appendChild(testButtonsDiv);
-}
-
-// 如果需要调试，可以取消下面这行的注释
-// addTestButtons();
