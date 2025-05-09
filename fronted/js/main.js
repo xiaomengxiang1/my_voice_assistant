@@ -1,3 +1,4 @@
+
 // 使用全局 PIXI.live2d 提供的 Live2DModel
 const { Live2DModel } = PIXI.live2d;
 
@@ -21,6 +22,7 @@ window.addEventListener('resize', () => {
 let model, isDragging = false;
 let dragOffset = { x: 0, y: 0 };
 let currentAnimationId = null;
+let modelLoaded = false; // 添加模型加载状态标志
 
 // 加载模型
 const modelUrl = 'model/whitecatfree_vts/sdwhite cat free.model3.json';
@@ -47,6 +49,8 @@ Live2DModel.from(encodeURI(modelUrl))
     if (model.internalModel.motionManager.definitions.idle) {
       model.internalModel.motionManager.startMotion('idle');
     }
+    
+    modelLoaded = true; // 标记模型已加载完成
   })
   .catch(err => console.error('模型加载失败:', err));
 
@@ -84,14 +88,18 @@ window.addEventListener('wheel', e => {
 
 // 字幕相关状态
 let aiMessageBuffer = '';
-let userTyping = false;
 let typingSpeed = 100; // 打字效果速度（毫秒/字符）
 let typingIndex = 0;
 let typingText = '';
 let typingInterval = null;
+let currentSubtitleType = null; // 添加当前字幕类型变量
 
 // 更新字幕显示
 function updateSubtitle(text, type = 'normal') {
+  // 不在字幕改变时刷新动画，除非类型改变
+  const typeChanged = currentSubtitleType !== type;
+  currentSubtitleType = type;
+  
   // 清除任何正在进行的打字动画
   clearInterval(typingInterval);
   typingIndex = 0;
@@ -100,9 +108,19 @@ function updateSubtitle(text, type = 'normal') {
   if (type === 'user') {
     subtitleEl.style.color = '#3498db'; // 用户消息为蓝色
     startTypingEffect(text);
+    
+    // 只有在之前不是用户消息的情况下才停止说话动画
+    if (typeChanged && currentAnimationId !== null) {
+      stopTalkingAnimation();
+    }
   } else if (type === 'ai') {
     subtitleEl.style.color = '#2ecc71'; // AI消息为绿色
     startTypingEffect(text);
+    
+    // 只有在之前不是AI消息时才开始说话动画
+    if (typeChanged && modelLoaded) {
+      playTalkingAnimation();
+    }
   } else if (type === 'system') {
     subtitleEl.style.color = '#f39c12'; // 系统消息为橙色
     subtitleEl.textContent = text;
@@ -157,6 +175,7 @@ function fadeOutSubtitle() {
       clearInterval(fadeInterval);
       subtitleEl.textContent = '';
       subtitleEl.style.opacity = 1.0;
+      currentSubtitleType = null; // 重置当前字幕类型
     }
   }, 50);
 }
@@ -166,14 +185,20 @@ function clearSubtitle() {
   subtitleEl.textContent = '';
   clearTimeout(subtitleEl._clear);
   clearInterval(typingInterval);
+  currentSubtitleType = null; // 重置当前字幕类型
 }
 
 // 初始化播放说话动画
 function playTalkingAnimation() {
-  if (model && model.internalModel.motionManager.definitions.talk) {
+  if (!modelLoaded || !model) return; // 确保模型已加载
+  
+  // 如果已经在播放动画，不要重复启动
+  if (currentAnimationId !== null) return;
+  
+  if (model.internalModel.motionManager.definitions.talk) {
     // 如果有专门的talk动画，播放它
     currentAnimationId = model.internalModel.motionManager.startMotion('talk');
-  } else if (model && model.internalModel.motionManager.definitions.tap_body) {
+  } else if (model.internalModel.motionManager.definitions.tap_body) {
     // 否则尝试播放tap_body作为替代
     currentAnimationId = model.internalModel.motionManager.startMotion('tap_body');
   }
@@ -181,11 +206,11 @@ function playTalkingAnimation() {
 
 // 停止说话动画，恢复到空闲
 function stopTalkingAnimation() {
-  if (model) {
-    if (currentAnimationId !== null) {
-      model.internalModel.motionManager.stopMotion(currentAnimationId);
-      currentAnimationId = null;
-    }
+  if (!modelLoaded || !model) return; // 确保模型已加载
+  
+  if (currentAnimationId !== null) {
+    model.internalModel.motionManager.stopMotion(currentAnimationId);
+    currentAnimationId = null;
     
     // 恢复到idle动画
     if (model.internalModel.motionManager.definitions.idle) {
@@ -238,7 +263,6 @@ function initSubtitleSocket() {
         // AI开始回复
         aiMessageBuffer = msg.text;
         updateSubtitle(aiMessageBuffer, 'ai');
-        playTalkingAnimation(); // 播放说话动画
       }
       else if (msg.type === 'ai_stream') {
         // AI流式回复片段
